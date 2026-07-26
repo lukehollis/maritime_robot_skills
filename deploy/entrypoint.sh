@@ -31,26 +31,41 @@ ln -sfn /opt/mrs/.claude "$LAB/.claude"
 #
 # The repo owns the keys it declares (the Blender MCP server, the skill roots);
 # Maritime and the gateway own everything else in that file. Merge, never copy.
-python3 /opt/mrs/deploy/reconcile_config.py \
-    --managed /opt/mrs/deploy/openclaw.json \
-    --target "$STATE/openclaw.json" || log "WARN: config reconcile failed"
+# Keep an untouched copy of whatever Maritime handed us, before anything of ours
+# runs. When the gateway rejects a config the VM panics and takes `maritime exec`
+# with it, so this file is the only way to see what it was actually given.
+cp "$STATE/openclaw.json" "$LOGS/openclaw.as-received.json" 2>/dev/null \
+    && log "saved as-received config to $LOGS/openclaw.as-received.json"
 
-# A config the gateway rejects is not a degraded agent, it is a dead VM: the
-# gateway is PID 1 under tini, so its exit panics the kernel and takes `maritime
-# exec` down with it — leaving no way in to repair the file. So validate here,
-# and if the merge produced something invalid, roll back to what Maritime wrote
-# and boot without our keys. A lab with no Blender tools can still be asked what
-# went wrong; an unreachable VM cannot.
-if (cd /app && node openclaw.mjs doctor 2>&1 | grep -qi "config invalid"); then
-    log "ERROR: merged openclaw.json is invalid"
-    if [ -e "$STATE/openclaw.json.pre-mrs" ]; then
-        cp "$STATE/openclaw.json.pre-mrs" "$STATE/openclaw.json"
-        log "rolled back to the pre-merge config; MCP tools and skills are NOT loaded"
-    else
-        log "no pre-merge backup to roll back to — the gateway may refuse to start"
-    fi
+python3 - <<'PY' 2>&1 | while read -r line; do log "$line"; done
+import json, pathlib
+p = pathlib.Path("/data/.openclaw/openclaw.json")
+try:
+    d = json.loads(p.read_text())
+    print("as-received root keys: " + ", ".join(sorted(d)))
+except FileNotFoundError:
+    print("as-received config: MISSING")
+except json.JSONDecodeError as exc:
+    # If Maritime writes JSON5, json.loads fails here and the reconcile would
+    # have started from {} — dropping gateway auth and model config entirely.
+    print(f"as-received config DOES NOT PARSE as strict JSON: {exc}")
+PY
+
+# MRS_RECONCILE=0 boots the stock Maritime agent untouched: no MCP server, no
+# skill roots. It is the escape hatch for exactly the situation where our own
+# config changes are what is stopping the VM from coming up.
+if [ "${MRS_RECONCILE:-1}" = "0" ]; then
+    log "MRS_RECONCILE=0 — leaving openclaw.json alone (no MCP tools, no skills)"
 else
-    log "config validated"
+    python3 /opt/mrs/deploy/reconcile_config.py \
+        --managed /opt/mrs/deploy/openclaw.json \
+        --target "$STATE/openclaw.json" || log "WARN: config reconcile failed"
+
+    # Record what the gateway's own validator thinks, in full. The previous
+    # attempt only grepped for a phrase and concluded "valid" when the phrase
+    # did not appear — which is how a broken config reached the gateway anyway.
+    (cd /app && node openclaw.mjs doctor 2>&1 | head -40) \
+        | while read -r line; do log "doctor: $line"; done
 fi
 
 # --- exec approvals -----------------------------------------------------------
@@ -153,6 +168,29 @@ if [ ! -e "${MRS_ASSET_DIR}/mujoco_menagerie/franka_emika_panda/panda.xml" ]; th
 fi
 
 # --- OpenClaw gateway ---------------------------------------------------------
+#
+# Not `exec`, deliberately. The gateway is the VM's init: if it exits, the kernel
+# panics and the machine is gone, along with any chance of logging in to find out
+# why. So supervise the first start instead — if it dies quickly, put Maritime's
+# own config back and start again. Whatever we got wrong, the agent comes up and
+# can be asked about it.
 log "handing off to: $*"
 cd /app || exit 1
-exec "$@"
+
+started=$(date +%s)
+"$@" &
+gateway=$!
+trap 'kill -TERM "$gateway" 2>/dev/null' TERM INT
+wait "$gateway"
+code=$?
+elapsed=$(( $(date +%s) - started ))
+
+if [ "$elapsed" -lt 90 ] && [ -e "$STATE/openclaw.json.pre-mrs" ]; then
+    log "gateway exited after ${elapsed}s (code $code) — restoring the pre-merge config and retrying"
+    log "the agent will come up WITHOUT the Blender MCP server or pipeline skills"
+    cp "$STATE/openclaw.json.pre-mrs" "$STATE/openclaw.json"
+    exec "$@"
+fi
+
+log "gateway exited after ${elapsed}s (code $code)"
+exit "$code"

@@ -35,7 +35,7 @@ from mrs.envs.scenegen import (  # noqa: E402
 )
 
 TABLE_TOP = 0.63
-BELT_X, BELT_Z, ROLLER_R = -0.10, 0.66, 0.025
+BELT_X, BELT_Z, ROLLER_R = -0.10, 0.66, 0.018
 BELT_SURFACE = BELT_Z + ROLLER_R
 BIN_X = 0.12
 BIN_YS = {"small": -0.22, "medium": 0.0, "large": 0.22}
@@ -97,7 +97,7 @@ def build_spec() -> SceneSpec:
         DynamicSpec(name="infeed", kind="roller_conveyor", params={
             "origin": (BELT_X, -0.06, BELT_Z), "direction": "+y",
             "length": 0.44, "width": 0.20, "roller_radius": ROLLER_R,
-            "spacing": 0.065, "roller_mass": 0.15, "kv": 4.0,
+            "spacing": 0.042, "roller_mass": 0.15, "kv": 4.0,
             "material": "steel_mat", "speed": 0.035, "end_stop": True,
             "duty": {"period": 10.0, "on_fraction": 0.45},
             "rail_height": 0.035,

@@ -69,9 +69,21 @@ Real infeeds queue parts against a backstop at the pick position, and that
 queue — parts jostling while the belt slips underneath — is usually the
 behaviour worth evaluating.
 
-Rollers should be **smaller than the shortest part dimension**. A part shorter
-than the roller pitch falls into the gap. Keep `spacing < 2.6 × roller_radius`
-and check the smallest part against it.
+**The roller radius is bounded from both sides, and the bounds can conflict.**
+Two constraints act on the pitch at once:
+
+    2 x roller_radius  <  spacing  <  shortest along-belt part dimension
+
+The lower bound stops adjacent rollers intersecting each other (which the
+validator reports as `layout_penetration` between roller geoms). The upper
+bound stops a part sitting cradled in the valley between two rollers, where the
+surfaces slide underneath it and it is never transported — the belt looks like
+it is running and nothing moves.
+
+At radius 25 mm against a 50 mm part the window is empty: no pitch satisfies
+both, and the only fix is a smaller roller. `parcel_sorting` shipped in exactly
+that state — pitch 65 mm under a 50 mm part — and transported nothing until the
+radius came down to 18 mm with a 42 mm pitch.
 
 ### `belt_field`
 
