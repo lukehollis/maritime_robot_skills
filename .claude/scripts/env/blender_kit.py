@@ -111,10 +111,25 @@ def _finish(obj, name, colour, role, properties):
 
 
 def add_box(name, size, location=(0, 0, 0), rotation=(0, 0, 0), colour=None, role="static", **kw):
-    """`size` is the full extent in metres (not MuJoCo half-extents)."""
+    """`size` is the full extent in metres (not MuJoCo half-extents).
+
+    `dimensions` is set explicitly and the view layer flushed, rather than
+    trusting `scale` alone. Setting scale on an object whose mesh datablock was
+    just recycled — which happens after `objects.remove` — can leave
+    `dimensions` reporting the unit cube, and the exporter reads `dimensions`.
+    A body that silently compiles as a 1 m cube is very hard to spot in a
+    render and hangs an enormous inertia off whatever it is attached to.
+    """
     bpy.ops.mesh.primitive_cube_add(size=1.0, location=location, rotation=rotation)
     obj = bpy.context.active_object
     obj.scale = (size[0], size[1], size[2])
+    bpy.context.view_layer.update()
+    obj.dimensions = (size[0], size[1], size[2])
+    bpy.context.view_layer.update()
+    if max(abs(obj.dimensions[i] - size[i]) for i in range(3)) > 1e-6:
+        raise RuntimeError(
+            f"{name}: dimensions came out {tuple(obj.dimensions)}, expected {tuple(size)}"
+        )
     return _finish(obj, name, colour, role, kw)
 
 

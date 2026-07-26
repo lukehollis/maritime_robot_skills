@@ -35,11 +35,11 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("package", type=Path, help="environment package (holds spec.json)")
-    parser.add_argument("--policy", default="auto", choices=["auto", "sort", "weld", "idle"],
+    parser.add_argument("--policy", default="auto", choices=["auto", "sort", "weld", "cut", "idle"],
                         help="auto picks the expert the scene calls for — a sorter when free "
                              "bodies pair with destinations, a welder when the scene carries "
-                             "tool sites; idle holds the arm still so you can watch the "
-                             "scene's own dynamics")
+                             "tool sites, a cutter when it carries a severable joint; idle "
+                             "holds the arm still so you can watch the scene's own dynamics")
     parser.add_argument("--object-tag", default=None,
                         help="tag identifying manipulable objects (default: auto-detect)")
     parser.add_argument("--destination-prefix", default="bin_")
@@ -79,7 +79,7 @@ def main(argv=None) -> int:
 
     from mrs.envs.scenegen import SceneEnv, SceneSpec
     from mrs.envs.scenegen.scripted import (
-        ScriptedSorter, ScriptedWelder, assignments_by_tag, sites_by_tag,
+        ScriptedCutter, ScriptedSorter, ScriptedWelder, assignments_by_tag, sites_by_tag,
     )
 
     spec = SceneSpec.load(args.package / "spec.json")
@@ -92,16 +92,23 @@ def main(argv=None) -> int:
     pairs = assignments_by_tag(spec, object_tag=tag, destination_prefix=args.destination_prefix) \
         if tag else []
     sites = sites_by_tag(spec, args.site_tag)
+    severable = next((d for d in spec.dynamics if d.kind == "severable"), None)
+    n_severable = sum(1 for d in spec.dynamics if d.kind == "severable")
 
     # A sorting scene and a tool scene need different experts, and which one a
     # scene is can be read off the scene itself: sortable pairs, or tool sites.
     mode = args.policy
     if mode == "auto":
-        mode = "sort" if pairs else ("weld" if sites else "idle")
+        mode = "sort" if pairs else ("weld" if sites else ("cut" if severable else "idle"))
 
     expert = None
     if mode == "sort" and pairs:
         expert = ScriptedSorter(env, pairs)
+    elif mode == "cut" and severable:
+        # One stroke sweeps the whole row, so every severable site is a target,
+        # ordered as the scene lists them.
+        cut_sites = [d.params["site"] for d in spec.dynamics if d.kind == "severable"]
+        expert = ScriptedCutter(env, sites=cut_sites)
     elif mode == "weld" and sites:
         settle = next((b.name for b in spec.free_bodies), None)
         expert = ScriptedWelder(env, sites, settle_body=settle)
@@ -112,7 +119,7 @@ def main(argv=None) -> int:
     print(f"scene    : {spec.name}")
     print(f"task     : {spec.task}")
     print(f"expert   : {mode} -> {type(expert).__name__ if expert else 'idle'}")
-    print(f"targets  : {pairs or sites or 'none'}")
+    print(f"targets  : {pairs or sites or (f'{n_severable} severable joints' if severable else 'none')}")
     print(f"dynamics : {[d.kind for d in spec.dynamics] or 'none'}")
     print("\nclose the viewer window to stop\n")
 
@@ -157,12 +164,16 @@ def main(argv=None) -> int:
                 if args.episodes and episode >= args.episodes:
                     break
 
-                # Let the finished state sit on screen for a moment before the
-                # scene snaps back, otherwise the reset reads as a glitch.
+                # Keep stepping through the pause instead of freezing. Success
+                # often fires the instant the task is technically complete —
+                # the moment a stalk is severed, before the cut piece has
+                # actually fallen — so a frozen pause hides the outcome the
+                # viewer exists to show.
                 deadline = time.perf_counter() + args.pause
                 while viewer.is_running() and time.perf_counter() < deadline:
+                    env.step(np.zeros(7))
                     viewer.sync()
-                    time.sleep(0.01)
+                    time.sleep(max(dt / max(args.speed, 1e-6), 0.0))
 
                 seed += 1
                 settled_at = None

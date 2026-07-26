@@ -50,6 +50,16 @@ if [ ! -e "$WS/AGENTS.md" ] || ! grep -qF "$MARKER" "$WS/AGENTS.md" 2>/dev/null;
     log "appended pipeline instructions to AGENTS.md"
 fi
 
+# --- /etc/hosts ---------------------------------------------------------------
+#
+# The Maritime microVM ships an empty /etc/hosts, so `localhost` does not
+# resolve. The BlenderMCP addon binds `localhost` by default and dies with
+# "Name or service not known"; plenty of other tooling assumes it too.
+if ! grep -q localhost /etc/hosts 2>/dev/null; then
+    printf '127.0.0.1 localhost\n::1 localhost ip6-localhost\n' >>/etc/hosts \
+        && log "seeded /etc/hosts" || log "WARN: could not write /etc/hosts"
+fi
+
 # --- X server -----------------------------------------------------------------
 DISPLAY_NUM=${DISPLAY#:}
 if ! pgrep -f "Xvfb :${DISPLAY_NUM}" >/dev/null 2>&1; then
@@ -68,11 +78,15 @@ fi
 
 # --- Blender + the MCP socket -------------------------------------------------
 #
-# --factory-startup keeps a stale ~/.config/blender from changing behaviour
-# between boots. The boot script enables the addon and opens the socket.
-if ! pgrep -f "/opt/blender/blender" >/dev/null 2>&1; then
+# No --factory-startup: the boot script installs the addon through Blender's own
+# installer, which writes into the user config, and factory startup would then
+# ignore what it just installed.
+#
+# `pgrep -x` matches the process name only. Matching the full command line would
+# also match this script, which contains the word.
+if ! pgrep -x blender >/dev/null 2>&1; then
     log "starting Blender"
-    blender --factory-startup --python /opt/mrs/deploy/blender/boot_blender.py \
+    blender --python /opt/mrs/deploy/blender/boot_blender.py \
         >"$LOGS/blender.log" 2>&1 &
 fi
 

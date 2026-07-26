@@ -22,7 +22,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # libgl1-mesa-dri carries llvmpipe (Blender's viewport); libosmesa6 is the
 # offscreen path MuJoCo renders the policy cameras through.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        xvfb x11-xserver-utils \
+        xvfb x11-xserver-utils x11-utils \
         libgl1 libglx-mesa0 libgl1-mesa-dri libegl1 libosmesa6 libglu1-mesa \
         libx11-6 libxext6 libxi6 libxxf86vm1 libxfixes3 libxrender1 \
         libxkbcommon0 libsm6 libice6 \
@@ -40,8 +40,13 @@ RUN curl -fsSL "https://download.blender.org/release/Blender${BLENDER_SERIES}/bl
 
 # Pinned to the revision vendored in blender-mcp/ so the container and the
 # workstation run byte-identical addon code.
+#
+# It is staged, not installed: Blender 4.2 has no bundled scripts/addons/
+# directory and does not pick the file up from BLENDER_USER_SCRIPTS either, so
+# boot_blender.py hands it to Blender's own installer at runtime.
 ARG BLENDER_MCP_REF=da4e16d
-RUN curl -fsSL -o "/opt/blender/${BLENDER_SERIES}/scripts/addons/blender_mcp_addon.py" \
+RUN mkdir -p /opt/blender-mcp \
+    && curl -fsSL -o /opt/blender-mcp/addon.py \
         "https://raw.githubusercontent.com/ahujasid/blender-mcp/${BLENDER_MCP_REF}/addon.py"
 
 # --- Quarto ------------------------------------------------------------------
