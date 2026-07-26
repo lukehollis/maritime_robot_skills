@@ -35,6 +35,25 @@ python3 /opt/mrs/deploy/reconcile_config.py \
     --managed /opt/mrs/deploy/openclaw.json \
     --target "$STATE/openclaw.json" || log "WARN: config reconcile failed"
 
+# --- exec approvals -----------------------------------------------------------
+#
+# There is nobody to approve a shell command here: the only human interface is
+# `maritime chat`, and an approval prompt would simply hang the pipeline. The
+# blast radius is one disposable microVM whose only durable state is /data.
+if [ ! -e "$STATE/exec-approvals.json" ]; then
+    cat >"$STATE/exec-approvals.json" <<'JSON'
+{
+  "version": 1,
+  "defaults": {
+    "security": "full",
+    "ask": "off",
+    "askFallback": "full"
+  }
+}
+JSON
+    log "wrote exec-approvals.json (unattended: full, no prompts)"
+fi
+
 # --- workspace ----------------------------------------------------------------
 #
 # PIPELINE.md documents code, so it is regenerated from the repo every boot. The
