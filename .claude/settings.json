@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(robo-env-create)",
+      "Skill(robo-policy-deploy)",
+      "Skill(robo-task-define)",
+      "Skill(robo-eval)",
+      "mcp__blender__get_scene_info",
+      "mcp__blender__get_object_info",
+      "mcp__blender__get_viewport_screenshot",
+      "mcp__blender__execute_blender_code",
+      "Bash(ls:*)",
+      "Bash(python3 .claude/scripts/env/build_env.py:*)",
+      "Bash(python3 .claude/scripts/env/validate_env.py:*)",
+      "Bash(python3 -c \"import mujoco*\")",
+      "Bash(python3 -m mrs.scripts.eval:*)",
+      "Bash(python3 -m mrs.scripts.visualize:*)",
+      "Bash(pytest:*)",
+      "Bash(mkdir:*)"
+    ]
+  }
+}

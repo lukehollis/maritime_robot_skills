@@ -1,0 +1,390 @@
+---
+title: "Policy evaluation"
+format:
+  html:
+    embed-resources: true
+    toc: true
+    toc-depth: 2
+    fig-align: left
+execute:
+  echo: false
+  warning: false
+jupyter: python3
+---
+
+```{python}
+# | tags: [setup]
+# Everything below is defensive: a run directory is assembled by four separate
+# pipeline stages and any of them may have been skipped or stubbed. A thin
+# report on a partial run is useful; a traceback is not.
+import json
+import os
+from pathlib import Path
+
+RUN = Path(os.environ.get("MRS_RUN_DIR", ".")).resolve()
+ENV_DIR = Path(os.environ.get("MRS_ENV_DIR", RUN.parent.parent)).resolve()
+
+
+def load_json(path, default=None):
+    try:
+        return json.loads(Path(path).read_text())
+    except (OSError, json.JSONDecodeError):
+        return default
+
+
+report = load_json(RUN / "summary.json", {}) or {}
+summary = report.get("summary", {}) or {}
+episodes = report.get("episodes", []) or []
+
+# The scripted expert is the ceiling every learned number is read against. It
+# may be a sibling run, a file dropped in by robo-eval --compare, or absent.
+expert = (
+    load_json(RUN / "expert.json")
+    or load_json(RUN / "scripted.json")
+    or load_json(RUN.parent / "scripted" / "summary.json")
+    or {}
+)
+expert_summary = expert.get("summary", {}) or {}
+
+spec = load_json(ENV_DIR / "spec.json", {}) or {}
+task = load_json(ENV_DIR / "task.json", {}) or {}
+policy_meta = load_json(ENV_DIR / "policy.json", {}) or {}
+validation = load_json(ENV_DIR / "validation.json", {}) or {}
+
+slug = ENV_DIR.name
+policy_name = report.get("policy") or policy_meta.get("policy") or "unknown"
+checkpoint = report.get("checkpoint") or policy_meta.get("checkpoint") or "—"
+
+# Ink and hues, light surface. Held in one place so a restyle is one edit.
+INK = "#0b0b0b"
+MUTED = "#898781"
+GRID = "#e1e0d9"
+BLUE = "#2a78d6"
+BLUE_SOFT = "#9ec5f4"
+GOOD = "#0ca30c"
+CRITICAL = "#d03b3b"
+
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+
+mpl.rcParams.update(
+    {
+        "figure.facecolor": "none",
+        "axes.facecolor": "none",
+        "savefig.facecolor": "none",
+        "font.family": "sans-serif",
+        "font.size": 11,
+        "text.color": INK,
+        "axes.labelcolor": MUTED,
+        "xtick.color": MUTED,
+        "ytick.color": MUTED,
+        "axes.edgecolor": GRID,
+        "axes.spines.top": False,
+        "axes.spines.right": False,
+        "axes.spines.left": False,
+        "figure.dpi": 150,
+    }
+)
+
+
+def pct(x):
+    return "—" if x is None else f"{100 * float(x):.0f}%"
+```
+
+```{python}
+# | output: asis
+# Inlined rather than a sibling .css so the template stays a single file that
+# mrs-report can drop into any run directory.
+print("""<style>
+.tiles { display: flex; flex-wrap: wrap; gap: 12px; margin: 1.2rem 0 1.6rem; }
+.tile { flex: 1 1 150px; padding: 14px 16px; border-radius: 10px;
+        background: #fcfcfb; border: 1px solid rgba(11,11,11,0.10); }
+.tile-label { font-size: 0.78rem; letter-spacing: 0.02em; text-transform: uppercase;
+              color: #898781; }
+.tile-value { font-size: 1.9rem; line-height: 1.15; margin: 2px 0 2px; color: #0b0b0b; }
+.tile-sub { font-size: 0.82rem; color: #52514e; }
+table { font-variant-numeric: tabular-nums; }
+figure img { max-width: 100%; }
+</style>""")
+```
+
+```{python}
+# | output: asis
+title = os.environ.get("MRS_REPORT_TITLE") or f"{slug}"
+lines = [
+    f"# {title}",
+    "",
+    f"**Policy** `{policy_name}` &nbsp;·&nbsp; **checkpoint** `{checkpoint}` "
+    f"&nbsp;·&nbsp; **environment** `{slug}` &nbsp;·&nbsp; **run** `{RUN.name}`",
+]
+if not report:
+    lines += [
+        "",
+        "> `summary.json` is missing or unreadable — there is nothing to report on.",
+    ]
+print("\n".join(lines))
+```
+
+## Headline
+
+```{python}
+# | output: asis
+# Stat tiles rather than a chart: four single numbers have no shape to show.
+success_rate = summary.get("success_rate")
+ceiling = expert_summary.get("success_rate")
+
+tiles = [
+    ("Success rate", pct(success_rate), f"{summary.get('successes', '—')} / {summary.get('episodes', '—')} episodes"),
+    ("Expert ceiling", pct(ceiling), "scripted, privileged state" if ceiling is not None else "not measured"),
+    ("Mean steps", f"{summary.get('mean_steps', float('nan')):.0f}" if summary.get("mean_steps") is not None else "—", "per episode"),
+    (
+        "Wall time",
+        f"{summary.get('mean_wall_time_s', 0) / 60:.1f} min" if summary.get("mean_wall_time_s") else "—",
+        f"{summary.get('total_inference_calls', '—')} inference calls",
+    ),
+]
+
+cells = "".join(
+    f'<div class="tile"><div class="tile-label">{label}</div>'
+    f'<div class="tile-value">{value}</div>'
+    f'<div class="tile-sub">{sub}</div></div>'
+    for label, value, sub in tiles
+)
+print(f'<div class="tiles">{cells}</div>')
+
+if ceiling is not None and success_rate is not None:
+    if ceiling < 0.9:
+        print(
+            f'\n> **The expert only solves this {pct(ceiling)} of the time.** '
+            "A learned policy cannot be graded against a task the privileged-state "
+            "expert does not reliably solve — fix the environment before reading "
+            "the number above."
+        )
+    elif success_rate == 0:
+        print(
+            "\n> Zero successes against a solvable task. That is a transfer result, "
+            "not a broken pipeline — read the failure modes below for where the "
+            "episodes actually ended."
+        )
+```
+
+```{python}
+# | fig-cap: "Measured success rate against the scripted-expert ceiling. Identity is carried by the row labels, so both bars share one hue."
+if summary.get("success_rate") is not None:
+    rows = [("This policy", summary.get("success_rate", 0.0))]
+    if ceiling is not None:
+        rows.append(("Scripted expert", ceiling))
+
+    fig, ax = plt.subplots(figsize=(7, 0.9 * len(rows) + 0.8))
+    ys = range(len(rows))
+    ax.barh(list(ys), [r[1] for r in rows], height=0.45, color=BLUE, zorder=3)
+    ax.set_yticks(list(ys), [r[0] for r in rows], color=INK)
+    ax.invert_yaxis()
+    ax.set_xlim(0, 1)
+    ax.set_xticks([0, 0.25, 0.5, 0.75, 1.0], ["0", "25%", "50%", "75%", "100%"])
+    ax.xaxis.grid(True, color=GRID, linewidth=1, zorder=0)
+    ax.set_axisbelow(True)
+    ax.tick_params(length=0)
+
+    # Direct labels: the value belongs next to the mark, not on an axis lookup.
+    for y, (_, v) in zip(ys, rows):
+        inside = v > 0.18
+        ax.text(
+            v - 0.015 if inside else v + 0.015,
+            y,
+            f"{100 * v:.0f}%",
+            va="center",
+            ha="right" if inside else "left",
+            color="#ffffff" if inside else INK,
+            fontweight="bold",
+        )
+    plt.tight_layout()
+    plt.show()
+```
+
+## Failure modes
+
+```{python}
+# | output: asis
+# robo-eval carries the triggered predicate names through per episode; the
+# reference driver in mrs/scripts/eval.py does not yet, so this stays optional.
+from collections import Counter
+
+modes = Counter()
+for ep in episodes:
+    for mode in ep.get("failure_modes", []) or []:
+        modes[mode] += 1
+
+if not modes:
+    failed = [e for e in episodes if not e.get("success")]
+    if failed:
+        print(
+            f"{len(failed)} of {len(episodes)} episodes failed, but this run carries no "
+            "per-episode `failure_modes`. Attribution needs the predicate names "
+            "`robo-task-define` writes into `spec.json` and `robo-eval` records per "
+            "episode — without them a failure is only a zero."
+        )
+    elif episodes:
+        print("No failures to attribute.")
+```
+
+```{python}
+# | fig-cap: "Episodes triggering each failure predicate. One episode can trigger several, so the bars need not sum to the failure count."
+if modes:
+    items = sorted(modes.items(), key=lambda kv: kv[1])
+    fig, ax = plt.subplots(figsize=(7, 0.45 * len(items) + 1.0))
+    ys = range(len(items))
+    ax.barh(list(ys), [v for _, v in items], height=0.55, color=BLUE, zorder=3)
+    ax.set_yticks(list(ys), [k for k, _ in items], color=INK)
+    ax.xaxis.grid(True, color=GRID, linewidth=1, zorder=0)
+    ax.set_axisbelow(True)
+    ax.tick_params(length=0)
+    ax.set_xlabel("episodes")
+    top = max(v for _, v in items)
+    ax.set_xlim(0, top * 1.2)
+    for y, (_, v) in zip(ys, items):
+        ax.text(v + top * 0.015, y, str(v), va="center", ha="left", color=INK)
+    plt.tight_layout()
+    plt.show()
+```
+
+## Episodes
+
+```{python}
+# | fig-cap: "Every episode in seed order. Outcome is marked ✓ / ✗ as well as coloured, and the bar length is the episode's step count."
+if episodes:
+    fig, ax = plt.subplots(figsize=(7, 0.34 * len(episodes) + 1.0))
+    ys = list(range(len(episodes)))
+    steps = [e.get("steps", 0) or 0 for e in episodes]
+    colors = [GOOD if e.get("success") else CRITICAL for e in episodes]
+
+    ax.barh(ys, steps, height=0.6, color=colors, zorder=3)
+    ax.set_yticks(ys, [f"seed {e.get('seed', i)}" for i, e in enumerate(episodes)], color=INK)
+    ax.invert_yaxis()
+    ax.xaxis.grid(True, color=GRID, linewidth=1, zorder=0)
+    ax.set_axisbelow(True)
+    ax.tick_params(length=0)
+    ax.set_xlabel("steps")
+    # Headroom for the direct labels, which sit outside the bar ends.
+    top = max(steps) if steps else 1
+    ax.set_xlim(0, top * 1.4)
+    for y, e, s in zip(ys, episodes, steps):
+        ax.text(
+            s + top * 0.02,
+            y,
+            "✓ solved" if e.get("success") else "✗ failed",
+            va="center",
+            ha="left",
+            color=INK,
+        )
+    plt.tight_layout()
+    plt.show()
+```
+
+```{python}
+# | output: asis
+# The table view is the accessibility fallback for the colour-coded strip above,
+# and the place per-episode detail actually belongs.
+if episodes:
+    head = ["seed", "outcome", "steps", "inference calls", "wall time (s)", "failure modes"]
+    rows = []
+    for i, e in enumerate(episodes):
+        rows.append(
+            [
+                str(e.get("seed", i)),
+                "solved" if e.get("success") else "failed",
+                str(e.get("steps", "—")),
+                str(e.get("inference_calls", "—")),
+                str(e.get("wall_time_s", "—")),
+                ", ".join(e.get("failure_modes", []) or []) or "—",
+            ]
+        )
+    print("| " + " | ".join(head) + " |")
+    print("|" + "---|" * len(head))
+    for r in rows:
+        print("| " + " | ".join(r) + " |")
+```
+
+## The scene
+
+```{python}
+# | output: asis
+# Whatever stage 0 and stage 3 left behind, in a stable order.
+shots = []
+for candidate in ("cameras.png", "scene.png", "viewport.png"):
+    p = ENV_DIR / candidate
+    if p.exists():
+        shots.append((p, f"`{candidate}` — what the policy cameras see"))
+for p in sorted(ENV_DIR.glob("renders/*.png"))[:6]:
+    shots.append((p, f"`renders/{p.name}`"))
+
+if shots:
+    for path, caption in shots:
+        rel = os.path.relpath(path, RUN)
+        print(f"![{caption}]({rel})\n")
+else:
+    print("No renders were saved with this environment.")
+
+videos = sorted(RUN.glob("*.mp4"))
+if videos:
+    print("\n### Rollout video\n")
+    print(
+        "Not embedded — these sit beside this file in "
+        f"`{RUN}`, and inlining them would multiply the report's size.\n"
+    )
+    for v in videos:
+        print(f"- [`{v.name}`]({v.name})")
+```
+
+## The task
+
+```{python}
+# | output: asis
+brief = ENV_DIR / "brief.md"
+if brief.exists():
+    print(brief.read_text().strip())
+else:
+    print("_No `brief.md` — this environment was built without one._")
+
+success_block = (spec.get("success") or {}) if isinstance(spec, dict) else {}
+if success_block:
+    print("\n### Success predicate\n")
+    print("```json")
+    print(json.dumps(success_block, indent=2))
+    print("```")
+
+if validation:
+    ok = validation.get("ok", validation.get("passed"))
+    print(f"\n### Validation\n\nGate: **{'passed' if ok else 'failed' if ok is not None else 'unknown'}**\n")
+    checks = validation.get("checks") or {}
+    if isinstance(checks, dict) and checks:
+        print("| check | result |")
+        print("|---|---|")
+        for k, v in checks.items():
+            print(f"| {k} | {v} |")
+```
+
+## Provenance
+
+```{python}
+# | output: asis
+env_cfg = report.get("env") or {}
+rows = [
+    ("environment", slug),
+    ("run directory", str(RUN)),
+    ("policy", policy_name),
+    ("checkpoint", str(checkpoint)),
+    ("episodes", str(summary.get("episodes", "—"))),
+    ("expert ceiling", pct(ceiling) if ceiling is not None else "not measured"),
+]
+for key in ("control_freq", "max_steps", "n_action_steps", "device", "seed"):
+    if key in env_cfg:
+        rows.append((key, str(env_cfg[key])))
+    elif key in policy_meta:
+        rows.append((key, str(policy_meta[key])))
+
+print("| | |")
+print("|---|---|")
+for k, v in rows:
+    print(f"| {k} | `{v}` |")
+```

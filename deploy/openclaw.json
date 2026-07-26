@@ -1,0 +1,26 @@
+{
+  "mcp": {
+    "servers": {
+      "blender": {
+        "command": "/opt/venv/bin/blender-mcp",
+        "args": [],
+        "env": {
+          "BLENDER_HOST": "127.0.0.1",
+          "BLENDER_PORT": "9876"
+        }
+      }
+    }
+  },
+  "skills": {
+    "load": {
+      "extraDirs": [
+        "/opt/mrs/.claude/skills",
+        "/opt/mrs/deploy/skills"
+      ],
+      "watch": false
+    }
+  },
+  "tools": {
+    "profile": "coding"
+  }
+}

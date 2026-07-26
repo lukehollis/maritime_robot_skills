@@ -1,0 +1,251 @@
+#!/opt/venv/bin/python3
+"""Dispatch long work and come back to it later.
+
+A rollout outlives the chat request that asked for it, so the agent cannot hold
+one open in the foreground: the reply would time out and the work would die with
+it. `mrs-job start` detaches the process into its own session, records enough to
+find it again, and returns immediately.
+
+    mrs-job start eval-mailsort -- python -m mrs.scripts.eval --policy pi05 --episodes 10
+    mrs-job list
+    mrs-job status eval-mailsort
+    mrs-job log eval-mailsort -n 50
+    mrs-job stop eval-mailsort
+
+State lives in $MRS_LAB/jobs/<id>/ so it survives the agent's own restarts.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+LAB = Path(os.environ.get("MRS_LAB", "/data/lab"))
+JOBS = LAB / "jobs"
+
+
+def job_dir(job_id: str) -> Path:
+    return JOBS / job_id
+
+
+def read_meta(d: Path) -> dict:
+    try:
+        return json.loads((d / "meta.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def exit_code(d: Path) -> int | None:
+    """The wrapper writes this on completion; absent means still running."""
+    try:
+        return int((d / "exit_code").read_text().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except (ProcessLookupError, PermissionError):
+        return False
+    except OSError:
+        return False
+    return True
+
+
+def state(d: Path) -> str:
+    code = exit_code(d)
+    if code is not None:
+        return "done" if code == 0 else f"failed({code})"
+    pid = read_meta(d).get("pid")
+    if pid and alive(int(pid)):
+        return "running"
+    # No exit code and no process: the container restarted under it.
+    return "orphaned"
+
+
+def cmd_start(args: argparse.Namespace) -> int:
+    if not args.command:
+        print("nothing to run: put the command after `--`", file=sys.stderr)
+        return 2
+
+    d = job_dir(args.id)
+    if d.exists():
+        if state(d) == "running":
+            print(f"job {args.id!r} is already running", file=sys.stderr)
+            return 1
+        # Keep the previous attempt rather than silently overwriting it.
+        stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(read_meta(d).get("started_at", time.time())))
+        d.rename(JOBS / f"{args.id}.{stamp}")
+
+    d.mkdir(parents=True)
+    log_path = d / "log"
+    cwd = Path(args.cwd).resolve() if args.cwd else LAB
+
+    # The shell wrapper is what makes the exit code observable: the job's own
+    # process can die in ways Python here never sees.
+    quoted = " ".join(_shell_quote(c) for c in args.command)
+    wrapper = f"{quoted}; echo $? > {_shell_quote(str(d / 'exit_code'))}"
+
+    with open(log_path, "wb") as log:
+        proc = subprocess.Popen(
+            ["/bin/bash", "-lc", wrapper],
+            cwd=str(cwd),
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,  # survives the caller's process group
+            env=os.environ.copy(),
+        )
+
+    (d / "meta.json").write_text(
+        json.dumps(
+            {
+                "id": args.id,
+                "pid": proc.pid,
+                "command": args.command,
+                "cwd": str(cwd),
+                "started_at": time.time(),
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+
+    print(json.dumps({"id": args.id, "pid": proc.pid, "log": str(log_path)}, indent=2))
+    return 0
+
+
+def _shell_quote(s: str) -> str:
+    if s and all(c.isalnum() or c in "-_./=:" for c in s):
+        return s
+    return "'" + s.replace("'", "'\\''") + "'"
+
+
+def cmd_list(args: argparse.Namespace) -> int:
+    if not JOBS.exists():
+        print("no jobs")
+        return 0
+    rows = []
+    for d in sorted(JOBS.iterdir(), key=lambda p: read_meta(p).get("started_at", 0), reverse=True):
+        if not d.is_dir():
+            continue
+        meta = read_meta(d)
+        started = meta.get("started_at")
+        rows.append(
+            {
+                "id": d.name,
+                "state": state(d),
+                "started": time.strftime("%Y-%m-%d %H:%M", time.localtime(started)) if started else "?",
+                "elapsed_s": round(time.time() - started) if started else None,
+                "command": " ".join(meta.get("command", [])),
+            }
+        )
+    if args.json:
+        print(json.dumps(rows, indent=2))
+        return 0
+    if not rows:
+        print("no jobs")
+        return 0
+    width = max(len(r["id"]) for r in rows)
+    for r in rows:
+        print(f"{r['id']:<{width}}  {r['state']:<12}  {r['started']}  {r['command'][:70]}")
+    return 0
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    d = job_dir(args.id)
+    if not d.exists():
+        print(f"no such job: {args.id}", file=sys.stderr)
+        return 3
+    meta = read_meta(d)
+    started = meta.get("started_at")
+    out = {
+        "id": args.id,
+        "state": state(d),
+        "exit_code": exit_code(d),
+        "pid": meta.get("pid"),
+        "command": meta.get("command"),
+        "elapsed_s": round(time.time() - started) if started else None,
+        "log": str(d / "log"),
+        "log_tail": _tail(d / "log", 5),
+    }
+    print(json.dumps(out, indent=2))
+    return 0
+
+
+def _tail(path: Path, n: int) -> list[str]:
+    try:
+        lines = path.read_text(errors="replace").splitlines()
+    except OSError:
+        return []
+    return lines[-n:]
+
+
+def cmd_log(args: argparse.Namespace) -> int:
+    d = job_dir(args.id)
+    if not d.exists():
+        print(f"no such job: {args.id}", file=sys.stderr)
+        return 3
+    for line in _tail(d / "log", args.n):
+        print(line)
+    return 0
+
+
+def cmd_stop(args: argparse.Namespace) -> int:
+    d = job_dir(args.id)
+    if not d.exists():
+        print(f"no such job: {args.id}", file=sys.stderr)
+        return 3
+    pid = read_meta(d).get("pid")
+    if not pid or not alive(int(pid)):
+        print(f"job {args.id} is not running")
+        return 0
+    # Signal the whole session so children (python, blender, ffmpeg) go too.
+    os.killpg(os.getpgid(int(pid)), signal.SIGTERM)
+    print(f"sent SIGTERM to job {args.id} (pgid {os.getpgid(int(pid))})")
+    return 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(prog="mrs-job", description=__doc__.splitlines()[0])
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    p = sub.add_parser("start", help="run a command detached")
+    p.add_argument("id", help="job id (also the directory name)")
+    p.add_argument("--cwd", help="working directory (default: $MRS_LAB)")
+    p.add_argument("command", nargs=argparse.REMAINDER, help="-- then the command")
+    p.set_defaults(func=cmd_start)
+
+    p = sub.add_parser("list", help="all jobs, newest first")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_list)
+
+    p = sub.add_parser("status", help="one job's state and log tail")
+    p.add_argument("id")
+    p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser("log", help="tail a job's output")
+    p.add_argument("id")
+    p.add_argument("-n", type=int, default=40)
+    p.set_defaults(func=cmd_log)
+
+    p = sub.add_parser("stop", help="SIGTERM a running job")
+    p.add_argument("id")
+    p.set_defaults(func=cmd_stop)
+
+    args = ap.parse_args()
+    if getattr(args, "command", None) and args.command and args.command[0] == "--":
+        args.command = args.command[1:]
+    JOBS.mkdir(parents=True, exist_ok=True)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

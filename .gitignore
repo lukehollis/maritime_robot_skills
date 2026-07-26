@@ -1,0 +1,27 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Downloaded robot models (~2 GB); fetched on first use by mrs/envs/assets.py
+.cache/
+
+# Rollout videos and eval summaries
+outputs/
+
+# Reference checkout, not part of this package
+lerobot/
+
+# Vendored reference checkouts with their own git history
+blender-mcp/
+image-blaster/
+
+# Secrets and machine-local Maritime link
+.env
+.maritime/
+
+# Generated environment packages live on the agent's /data, not in the repo
+envs/
+MUJOCO_LOG.TXT
+.DS_Store
+Physical_AI_Agent/

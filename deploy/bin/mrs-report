@@ -1,0 +1,81 @@
+#!/opt/venv/bin/python3
+"""Render an evaluation run into a single self-contained HTML report.
+
+    mrs-report envs/mail-sorting/eval/20260726-1901
+    mrs-report envs/mail-sorting/eval/20260726-1901 --env-dir envs/mail-sorting
+
+The report template lives in the image, not in the run, so a rebuild improves
+every past run's report. It is copied in, rendered in place so relative paths to
+renders and videos resolve, and removed again.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+TEMPLATE = Path("/opt/mrs/deploy/report/report.qmd")
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(prog="mrs-report", description=__doc__.splitlines()[0])
+    ap.add_argument("run_dir", type=Path, help="an eval run directory containing summary.json")
+    ap.add_argument("--env-dir", type=Path, help="the environment package (default: inferred)")
+    ap.add_argument("--title", help="report title (default: inferred from the env slug)")
+    args = ap.parse_args()
+
+    run_dir = args.run_dir.resolve()
+    if not run_dir.is_dir():
+        print(f"no such run directory: {run_dir}", file=sys.stderr)
+        return 3
+    if not (run_dir / "summary.json").exists():
+        print(f"{run_dir}/summary.json is missing — nothing to report on", file=sys.stderr)
+        return 3
+
+    # envs/<slug>/eval/<stamp> -> envs/<slug>
+    env_dir = args.env_dir.resolve() if args.env_dir else run_dir.parent.parent
+    if not (env_dir / "spec.json").exists():
+        print(f"note: {env_dir} has no spec.json; scene sections will be thin", file=sys.stderr)
+
+    staged = run_dir / "report.qmd"
+    shutil.copyfile(TEMPLATE, staged)
+
+    env = os.environ.copy()
+    env["MRS_RUN_DIR"] = str(run_dir)
+    env["MRS_ENV_DIR"] = str(env_dir)
+    if args.title:
+        env["MRS_REPORT_TITLE"] = args.title
+    env.setdefault("QUARTO_PYTHON", "/opt/venv/bin/python3")
+
+    try:
+        proc = subprocess.run(
+            ["quarto", "render", "report.qmd", "--to", "html"],
+            cwd=str(run_dir),
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+    finally:
+        staged.unlink(missing_ok=True)
+
+    if proc.returncode != 0:
+        sys.stderr.write(proc.stdout)
+        sys.stderr.write(proc.stderr)
+        print("quarto render failed", file=sys.stderr)
+        return 1
+
+    out = run_dir / "report.html"
+    if not out.exists():
+        print("quarto reported success but produced no report.html", file=sys.stderr)
+        return 1
+
+    print(f"{out}  ({out.stat().st_size // 1024} KB)")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

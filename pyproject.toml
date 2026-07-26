@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mrs"
+version = "0.1.0"
+description = "A MuJoCo Franka Panda pick-and-place environment and a self-contained pi0.5 inference stack"
+requires-python = ">=3.10"
+dependencies = [
+    "mujoco>=3.2",
+    "numpy>=1.26",
+    "torch>=2.4",
+    "transformers>=4.50",
+    "safetensors>=0.4",
+    "huggingface-hub>=0.24",
+    "imageio>=2.34",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+mrs-eval = "mrs.scripts.eval:main"
+mrs-visualize = "mrs.scripts.visualize:main"
+
+[tool.setuptools.packages.find]
+include = ["mrs*"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
