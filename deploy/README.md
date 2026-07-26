@@ -24,6 +24,18 @@ deploy/
 .claude/skills/            stages 0-3
 ```
 
+## Why the MCP server is keyed `mcp__blender`
+
+OpenClaw exposes MCP tools as `<serverKey>__<toolName>`, and the pipeline skills
+were authored against Claude Code's `mcp__blender__*` names. Keying the server
+`mcp__blender` makes both harnesses produce identical tool names, so one copy of
+the skills runs in either without edits.
+
+`openclaw.json` is validated strictly and is plain JSON — an explanatory
+`_comment` key at the root is enough to make the gateway refuse to start, which
+takes the whole microVM down with it (the gateway is PID 1 under tini, so its
+exit is a kernel panic). Keep notes in this file, not in the config.
+
 ## Deploy
 
 ```bash

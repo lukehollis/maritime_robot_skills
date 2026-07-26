@@ -13,6 +13,14 @@ import json
 from pathlib import Path
 
 
+# Root keys to delete from the live config before merging. A merge only ever
+# adds, so a key we shipped by mistake would otherwise persist on /data forever.
+# `_comment` was one: openclaw.json is validated strictly, and an explanatory
+# key at the root made the gateway refuse to start — which panics the microVM,
+# since the gateway is PID 1.
+PRUNE_ROOT_KEYS = ("_comment",)
+
+
 def deep_merge(base: dict, managed: dict) -> dict:
     """Return `base` updated by `managed`, recursing into dicts only.
 
@@ -48,6 +56,16 @@ def main() -> int:
             base = {}
     else:
         base = {}
+
+    for key in PRUNE_ROOT_KEYS:
+        if base.pop(key, None) is not None:
+            print(f"pruned stale root key {key!r}")
+
+    # Keep the pre-merge config. If the merge produces something the gateway
+    # rejects it exits, and because it is PID 1 the whole microVM panics — so
+    # the only way back in is `maritime exec` restoring this file.
+    if base:
+        args.target.with_suffix(".json.pre-mrs").write_text(json.dumps(base, indent=2) + "\n")
 
     args.target.parent.mkdir(parents=True, exist_ok=True)
     args.target.write_text(json.dumps(deep_merge(base, managed), indent=2) + "\n")

@@ -88,9 +88,23 @@ def main(argv=None) -> int:
     # step would roughly triple the cost for no visible benefit.
     env.render_observations = False
 
+    # `task.json` is stage 2's artifact and the authoritative record of how the
+    # reference expert drives this scene. Tag-pairing only expresses a sorting
+    # map; a plan like "out, then back in" visits the same object twice and has
+    # to be written down explicitly.
+    pairs = []
+    task_file = args.package / "task.json"
+    if task_file.is_file():
+        import json
+
+        plan = (json.loads(task_file.read_text()).get("expert") or {}).get("assignments")
+        if plan:
+            pairs = [tuple(entry) for entry in plan]
+
     tag = args.object_tag or _guess_object_tag(spec)
-    pairs = assignments_by_tag(spec, object_tag=tag, destination_prefix=args.destination_prefix) \
-        if tag else []
+    if not pairs and tag:
+        pairs = assignments_by_tag(spec, object_tag=tag,
+                                   destination_prefix=args.destination_prefix)
     sites = sites_by_tag(spec, args.site_tag)
     severable = next((d for d in spec.dynamics if d.kind == "severable"), None)
     n_severable = sum(1 for d in spec.dynamics if d.kind == "severable")
@@ -103,7 +117,12 @@ def main(argv=None) -> int:
 
     expert = None
     if mode == "sort" and pairs:
-        expert = ScriptedSorter(env, pairs)
+        settings = {}
+        if task_file.is_file():
+            import json
+
+            settings = (json.loads(task_file.read_text()).get("expert") or {}).get("settings", {})
+        expert = ScriptedSorter(env, pairs, **settings)
     elif mode == "cut" and severable:
         # One stroke sweeps the whole row, so every severable site is a target,
         # ordered as the scene lists them.

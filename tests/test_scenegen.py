@@ -182,3 +182,56 @@ def test_unknown_robot_names_the_registered_ones():
     # a scene the policy interface cannot drive.
     with pytest.raises(ValueError, match="gripper"):
         get_robot("fr3")
+
+
+def test_free_body_keeps_its_authored_orientation_on_reset():
+    """A banana modelled lying down must not stand up when the episode starts.
+
+    `reset` composes the spawn yaw with the authored quaternion. Replacing it
+    instead silently reorients anything not axis-aligned, which spawns it
+    inside whatever it was resting on.
+    """
+    import math
+
+    spec = minimal_spec()
+    lying = BodySpec(
+        name="rod", kind="free", shape="capsule", size=(0.018, 0.055),
+        # 90 degrees about y: the capsule's local +z axis laid onto world +x.
+        pos=(-0.05, 0.0, TABLE_TOP + 0.02),
+        quat=(math.cos(math.pi / 4), 0.0, math.sin(math.pi / 4), 0.0),
+        mass=0.1,
+    )
+    spec.bodies.append(lying)
+    env = SceneEnv(spec)
+    env.reset(seed=0)
+
+    import mujoco
+
+    body_id = mujoco.mj_name2id(env.model, mujoco.mjtObj.mjOBJ_BODY, "rod")
+    axis = env.data.xmat[body_id].reshape(3, 3)[:, 2]  # the capsule's own axis
+    assert abs(axis[2]) < 0.2, f"rod stood up on reset: axis={axis}"
+    assert abs(axis[0]) > 0.9, f"rod is not lying along x: axis={axis}"
+    env.close()
+
+
+def test_spawn_yaw_composes_with_authored_orientation():
+    import math
+
+    spec = minimal_spec()
+    spec.bodies.append(
+        BodySpec(name="rod", kind="free", shape="capsule", size=(0.018, 0.055),
+                 pos=(-0.05, 0.0, TABLE_TOP + 0.02),
+                 quat=(math.cos(math.pi / 4), 0.0, math.sin(math.pi / 4), 0.0),
+                 spawn_range={"yaw": (1.2, 1.2)}, mass=0.1)
+    )
+    env = SceneEnv(spec)
+    env.reset(seed=0)
+
+    import mujoco
+
+    body_id = mujoco.mj_name2id(env.model, mujoco.mjtObj.mjOBJ_BODY, "rod")
+    axis = env.data.xmat[body_id].reshape(3, 3)[:, 2]
+    # Still horizontal, but yawed away from +x by the spawn rotation.
+    assert abs(axis[2]) < 0.2, f"yaw should not tip the rod: axis={axis}"
+    assert abs(axis[0]) < 0.95, f"yaw was not applied: axis={axis}"
+    env.close()

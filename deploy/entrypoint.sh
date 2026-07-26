@@ -35,6 +35,24 @@ python3 /opt/mrs/deploy/reconcile_config.py \
     --managed /opt/mrs/deploy/openclaw.json \
     --target "$STATE/openclaw.json" || log "WARN: config reconcile failed"
 
+# A config the gateway rejects is not a degraded agent, it is a dead VM: the
+# gateway is PID 1 under tini, so its exit panics the kernel and takes `maritime
+# exec` down with it — leaving no way in to repair the file. So validate here,
+# and if the merge produced something invalid, roll back to what Maritime wrote
+# and boot without our keys. A lab with no Blender tools can still be asked what
+# went wrong; an unreachable VM cannot.
+if (cd /app && node openclaw.mjs doctor 2>&1 | grep -qi "config invalid"); then
+    log "ERROR: merged openclaw.json is invalid"
+    if [ -e "$STATE/openclaw.json.pre-mrs" ]; then
+        cp "$STATE/openclaw.json.pre-mrs" "$STATE/openclaw.json"
+        log "rolled back to the pre-merge config; MCP tools and skills are NOT loaded"
+    else
+        log "no pre-merge backup to roll back to — the gateway may refuse to start"
+    fi
+else
+    log "config validated"
+fi
+
 # --- exec approvals -----------------------------------------------------------
 #
 # There is nobody to approve a shell command here: the only human interface is

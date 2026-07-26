@@ -1,5 +1,4 @@
 {
-  "_comment": "OpenClaw exposes MCP tools as `<serverKey>__<toolName>`, and the pipeline skills were authored against Claude Code's `mcp__blender__*` names. Keying the server `mcp__blender` makes both harnesses produce the same tool names, so one copy of the skills runs in either.",
   "mcp": {
     "servers": {
       "mcp__blender": {
