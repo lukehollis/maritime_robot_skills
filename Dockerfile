@@ -68,7 +68,8 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel \
     && pip install --no-cache-dir \
         "mujoco>=3.2" "numpy>=1.26" "transformers>=4.50" "safetensors>=0.4" \
         "huggingface-hub>=0.24" "imageio>=2.34" imageio-ffmpeg \
-        matplotlib pandas jupyter blender-mcp
+        matplotlib pandas jupyter blender-mcp \
+    && python3 -m ipykernel install --sys-prefix --name python3 --display-name python3
 
 # --- the project itself ------------------------------------------------------
 COPY . /opt/mrs
