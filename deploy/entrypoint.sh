@@ -74,6 +74,11 @@ else
         --managed /opt/mrs/deploy/openclaw.json \
         --target "$STATE/openclaw.json" || log "WARN: config reconcile failed"
 
+    # Keep the merged result too. When the gateway rejects it the VM panics and
+    # the file is rewritten by the next boot before anyone can look at it — this
+    # copy is the only way to see what was actually rejected.
+    cp "$STATE/openclaw.json" "$LOGS/openclaw.merged.json" 2>/dev/null || true
+
     # Diagnostics only, and strictly off the boot path: `doctor` is slow and can
     # sit there indefinitely, and nothing may block the gateway from starting.
     # The supervisor at the bottom of this script is what actually protects
@@ -204,11 +209,35 @@ wait "$gateway"
 code=$?
 elapsed=$(( $(date +%s) - started ))
 
-if [ "$elapsed" -lt 90 ] && [ -e "$STATE/openclaw.json.pre-mrs" ]; then
-    log "gateway exited after ${elapsed}s (code $code) — restoring the pre-merge config and retrying"
-    log "the agent will come up WITHOUT the Blender MCP server or pipeline skills"
-    cp "$STATE/openclaw.json.pre-mrs" "$STATE/openclaw.json"
-    exec "$@"
+if [ "$elapsed" -lt 90 ]; then
+    log "gateway exited after ${elapsed}s (code $code) — attempting recovery"
+
+    if [ -e "$STATE/openclaw.json.pre-mrs" ]; then
+        log "restoring the pre-merge config (no Blender MCP server, no pipeline skills)"
+        cp "$STATE/openclaw.json.pre-mrs" "$STATE/openclaw.json"
+    else
+        log "no pre-merge backup; running 'openclaw doctor --fix'"
+        (cd /app && timeout 120 node openclaw.mjs doctor --fix >>"$LOGS/doctor.log" 2>&1) || true
+    fi
+
+    started=$(date +%s)
+    "$@" &
+    gateway=$!
+    trap 'kill -TERM "$gateway" 2>/dev/null' TERM INT
+    wait "$gateway"
+    code=$?
+    elapsed=$(( $(date +%s) - started ))
+fi
+
+# Never return. This script is tini's only child, so exiting here is
+# "Kernel panic - not syncing: Attempted to kill init" — the VM disappears and
+# `maritime exec` with it, which is precisely when someone needs to log in and
+# look. Park instead: no gateway, but a reachable machine and a log saying why.
+if [ "$elapsed" -lt 90 ]; then
+    log "FATAL: gateway exited again after ${elapsed}s (code $code)"
+    log "holding the VM open so it stays reachable — inspect $LOGS/openclaw.merged.json"
+    log "and $LOGS/doctor.log, then 'maritime restart' once the config is fixed"
+    while true; do sleep 3600; done
 fi
 
 log "gateway exited after ${elapsed}s (code $code)"
