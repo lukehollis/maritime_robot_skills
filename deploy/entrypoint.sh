@@ -13,6 +13,14 @@ set -uo pipefail
 
 log() { printf '[entrypoint] %s\n' "$*" >&2; }
 
+# maritime-init replaces PATH wholesale before launching this script, so the
+# Dockerfile's ENV PATH is gone by now: `python3` resolves to Debian's (no
+# mujoco, no mrs) and mrs-job/mrs-report are not on it at all. The gateway is
+# this script's child, and the agent's shell commands are the gateway's
+# children, so putting them back here is what makes the pipeline runnable.
+export PATH=/opt/venv/bin:/opt/mrs/deploy/bin:$PATH
+PYTHON=/opt/venv/bin/python3
+
 LAB=${MRS_LAB:-/data/lab}
 STATE="${HOME:-/data}/.openclaw"
 LOGS=/data/logs
@@ -37,7 +45,7 @@ ln -sfn /opt/mrs/.claude "$LAB/.claude"
 cp "$STATE/openclaw.json" "$LOGS/openclaw.as-received.json" 2>/dev/null \
     && log "saved as-received config to $LOGS/openclaw.as-received.json"
 
-python3 - <<'PY' 2>&1 | while read -r line; do log "$line"; done
+"$PYTHON" - <<'PY' 2>&1 | while read -r line; do log "$line"; done
 import json, pathlib
 p = pathlib.Path("/data/.openclaw/openclaw.json")
 try:
@@ -57,7 +65,7 @@ PY
 if [ "${MRS_RECONCILE:-1}" = "0" ]; then
     log "MRS_RECONCILE=0 — leaving openclaw.json alone (no MCP tools, no skills)"
 else
-    python3 /opt/mrs/deploy/reconcile_config.py \
+    "$PYTHON" /opt/mrs/deploy/reconcile_config.py \
         --managed /opt/mrs/deploy/openclaw.json \
         --target "$STATE/openclaw.json" || log "WARN: config reconcile failed"
 
@@ -113,7 +121,9 @@ if ! grep -q localhost /etc/hosts 2>/dev/null; then
 fi
 
 # --- X server -----------------------------------------------------------------
+DISPLAY=${DISPLAY:-:99}
 DISPLAY_NUM=${DISPLAY#:}
+export DISPLAY
 if ! pgrep -f "Xvfb :${DISPLAY_NUM}" >/dev/null 2>&1; then
     log "starting Xvfb on ${DISPLAY}"
     Xvfb "${DISPLAY}" -screen 0 1920x1080x24 -nolisten tcp >"$LOGS/xvfb.log" 2>&1 &
@@ -158,10 +168,11 @@ fi
 # Menagerie is ~2 GB whole and /data has 10 GB to share with a 7.5 GB
 # checkpoint, so it is fetched on demand rather than baked in. Warm the Panda in
 # the background so stage 0's prerequisite check passes on the first run.
-if [ ! -e "${MRS_ASSET_DIR}/mujoco_menagerie/franka_emika_panda/panda.xml" ]; then
+ASSETS=${MRS_ASSET_DIR:-$LAB/.cache}
+if [ ! -e "${ASSETS}/mujoco_menagerie/franka_emika_panda/panda.xml" ]; then
     log "fetching mujoco_menagerie in the background"
     (
-        cd "$LAB" && python3 -c "from mrs.envs import assets; print(assets.panda_model_path())" \
+        cd "$LAB" && "$PYTHON" -c "from mrs.envs import assets; print(assets.panda_model_path())" \
             >"$LOGS/menagerie.log" 2>&1 \
             && log "menagerie ready" || log "WARN: menagerie fetch failed"
     ) &

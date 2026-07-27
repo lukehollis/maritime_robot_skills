@@ -51,8 +51,12 @@ through a rollout.
 - **Rendering is software.** Blender's viewport is Mesa llvmpipe and MuJoCo
   renders through OSMesa (`MUJOCO_GL=osmesa`). Both work; both are slow. Prefer
   a few well-chosen renders over sweeping the camera.
-- **Python is `/opt/venv/bin/python3`**, already on PATH, with `mrs` installed
-  in editable mode from `/opt/mrs`.
+- **Python is `/opt/venv/bin/python3`** — the one with `mujoco`, `torch` and
+  `mrs` in it. Your shell has it first on PATH, so plain `python3` is correct.
+  But Maritime's own `exec` channel uses a different PATH where `python3` is
+  Debian's and imports of `mujoco` or `mrs` fail with `ModuleNotFoundError`. If
+  you ever see that, you are running the wrong interpreter: use the absolute
+  path, and do not conclude the package is missing.
 
 ## Long jobs
 

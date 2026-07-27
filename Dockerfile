@@ -73,8 +73,12 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel \
 
 # --- the project itself ------------------------------------------------------
 COPY . /opt/mrs
+# The symlinks are for `maritime exec`, which gets its own PATH (system + nix)
+# and never sees this image's ENV. /usr/local/bin is on it.
 RUN pip install --no-cache-dir -e /opt/mrs \
-    && chmod +x /opt/mrs/deploy/entrypoint.sh /opt/mrs/deploy/bin/*
+    && chmod +x /opt/mrs/deploy/entrypoint.sh /opt/mrs/deploy/bin/* \
+    && ln -sf /opt/mrs/deploy/bin/mrs-job /usr/local/bin/mrs-job \
+    && ln -sf /opt/mrs/deploy/bin/mrs-report /usr/local/bin/mrs-report
 
 ENV PATH=/opt/mrs/deploy/bin:$PATH \
     DISPLAY=:99 \
