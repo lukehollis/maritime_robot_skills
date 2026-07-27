@@ -1,0 +1,70 @@
+#!/opt/venv/bin/python3
+"""Keep only the Menagerie robots this lab actually uses.
+
+The full clone is ~2.3 GB across 82 robots. /data is 10 GB and the pi0.5
+checkpoint alone is 7.5 GB of it, so keeping all 82 means the checkpoint does
+not fit — the download dies partway with no disk left, which is a much worse
+failure than a missing robot.
+
+Set MRS_MENAGERIE_KEEP to a comma-separated list to keep more. Removed robots
+are recorded in PRUNED.md beside the cache so the loss is discoverable, and
+re-fetching is just deleting the cache directory.
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import sys
+from pathlib import Path
+
+CACHE = Path(os.environ.get("MRS_ASSET_DIR", "/data/lab/.cache")) / "mujoco_menagerie"
+KEEP = {
+    r.strip()
+    for r in os.environ.get("MRS_MENAGERIE_KEEP", "franka_emika_panda").split(",")
+    if r.strip()
+}
+MARKER = CACHE / "PRUNED.md"
+
+
+def main() -> int:
+    if not CACHE.is_dir():
+        print(f"no menagerie at {CACHE}; nothing to prune")
+        return 0
+    if MARKER.exists():
+        return 0
+
+    removed, kept = [], []
+    for child in sorted(CACHE.iterdir()):
+        if not child.is_dir() or child.name.startswith("."):
+            continue
+        if child.name in KEEP:
+            kept.append(child.name)
+            continue
+        shutil.rmtree(child, ignore_errors=True)
+        removed.append(child.name)
+
+    if not kept:
+        # Never leave the cache empty — that would look like a fresh clone and
+        # send the next boot into another 2.3 GB download.
+        print(f"refusing to prune: none of {sorted(KEEP)} were present", file=sys.stderr)
+        return 1
+
+    MARKER.write_text(
+        "# Pruned Menagerie\n\n"
+        f"Kept: {', '.join(kept)}\n\n"
+        f"Removed {len(removed)} other robots to leave room for policy checkpoints "
+        "on this 10 GB volume.\n\n"
+        "To get one back, set `MRS_MENAGERIE_KEEP` (comma-separated) and delete this "
+        "directory so it re-clones:\n\n"
+        "```bash\n"
+        f"rm -rf {CACHE}\n"
+        "```\n\n"
+        "Removed: " + ", ".join(removed) + "\n"
+    )
+    print(f"pruned {len(removed)} robots, kept {kept}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

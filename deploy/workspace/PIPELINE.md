@@ -38,6 +38,11 @@ checkpoint at a time; `du -sh /data/hf` before downloading a second one, and
 delete the old one deliberately rather than discovering the disk full halfway
 through a rollout.
 
+For the same reason the Menagerie clone is pruned to the robots this lab uses
+(the full 82 would leave no room for a checkpoint). `.cache/mujoco_menagerie/
+PRUNED.md` records what was removed and how to get it back — if a task needs a
+robot that is not there, that file is the answer, not a bug.
+
 ## The container
 
 - **No GPU.** 4 vCPU, 16 GB RAM. pi0.5 runs at roughly **20–30 s per action

@@ -180,7 +180,10 @@ if [ ! -e "${ASSETS}/mujoco_menagerie/franka_emika_panda/panda.xml" ]; then
         cd "$LAB" && "$PYTHON" -c "from mrs.envs import assets; print(assets.panda_model_path())" \
             >"$LOGS/menagerie.log" 2>&1 \
             && log "menagerie ready" || log "WARN: menagerie fetch failed"
+        /opt/mrs/deploy/bin/mrs-prune-assets >>"$LOGS/menagerie.log" 2>&1 || true
     ) &
+else
+    /opt/mrs/deploy/bin/mrs-prune-assets >>"$LOGS/menagerie.log" 2>&1 &
 fi
 
 # --- OpenClaw gateway ---------------------------------------------------------
