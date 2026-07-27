@@ -78,7 +78,20 @@ COPY . /opt/mrs
 RUN pip install --no-cache-dir -e /opt/mrs \
     && chmod +x /opt/mrs/deploy/entrypoint.sh /opt/mrs/deploy/bin/* \
     && ln -sf /opt/mrs/deploy/bin/mrs-job /usr/local/bin/mrs-job \
-    && ln -sf /opt/mrs/deploy/bin/mrs-report /usr/local/bin/mrs-report
+    && ln -sf /opt/mrs/deploy/bin/mrs-report /usr/local/bin/mrs-report \
+    && ln -sf /opt/mrs/deploy/bin/mrs-prune-assets /usr/local/bin/mrs-prune-assets \
+    # Exporting PATH from the entrypoint is not enough: the agent's own shells
+    # come back with the stock PATH, so `python3` was Debian's and `import mrs`
+    # failed. /usr/local/bin precedes /usr/bin everywhere here, so this is the
+    # one place a python3 lands for every caller. Safe because the only other
+    # python3 user in this image, maritime-auto-approve, is stdlib-only.
+    #
+    # A wrapper, not a symlink: a venv interpreter reached through a symlink
+    # elsewhere on the filesystem does not find its pyvenv.cfg, so it silently
+    # runs as the base interpreter with sys.prefix=/usr and no site-packages.
+    && printf '#!/bin/sh\nexec /opt/venv/bin/python3 "$@"\n' > /usr/local/bin/python3 \
+    && cp /usr/local/bin/python3 /usr/local/bin/python \
+    && chmod +x /usr/local/bin/python3 /usr/local/bin/python
 
 ENV PATH=/opt/mrs/deploy/bin:$PATH \
     DISPLAY=:99 \
