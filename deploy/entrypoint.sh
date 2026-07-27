@@ -45,7 +45,11 @@ ln -sfn /opt/mrs/.claude "$LAB/.claude"
 cp "$STATE/openclaw.json" "$LOGS/openclaw.as-received.json" 2>/dev/null \
     && log "saved as-received config to $LOGS/openclaw.as-received.json"
 
-"$PYTHON" - <<'PY' 2>&1 | while read -r line; do log "$line"; done
+# Written to a file, never piped into a read loop. A `cmd | while read` in the
+# boot path is a way to hang forever: any process that inherits the write end of
+# that pipe holds it open, `read` never sees EOF, and the gateway is never
+# started — which is exactly what happened.
+"$PYTHON" - >"$LOGS/config-check.log" 2>&1 <<'PY'
 import json, pathlib
 p = pathlib.Path("/data/.openclaw/openclaw.json")
 try:
@@ -58,6 +62,7 @@ except json.JSONDecodeError as exc:
     # have started from {} — dropping gateway auth and model config entirely.
     print(f"as-received config DOES NOT PARSE as strict JSON: {exc}")
 PY
+log "config check: $(cat "$LOGS/config-check.log" 2>/dev/null | head -1)"
 
 # MRS_RECONCILE=0 boots the stock Maritime agent untouched: no MCP server, no
 # skill roots. It is the escape hatch for exactly the situation where our own
@@ -69,11 +74,11 @@ else
         --managed /opt/mrs/deploy/openclaw.json \
         --target "$STATE/openclaw.json" || log "WARN: config reconcile failed"
 
-    # Record what the gateway's own validator thinks, in full. The previous
-    # attempt only grepped for a phrase and concluded "valid" when the phrase
-    # did not appear — which is how a broken config reached the gateway anyway.
-    (cd /app && node openclaw.mjs doctor 2>&1 | head -40) \
-        | while read -r line; do log "doctor: $line"; done
+    # Diagnostics only, and strictly off the boot path: `doctor` is slow and can
+    # sit there indefinitely, and nothing may block the gateway from starting.
+    # The supervisor at the bottom of this script is what actually protects
+    # against a bad config.
+    ( cd /app && timeout 120 node openclaw.mjs doctor >"$LOGS/doctor.log" 2>&1 ) &
 fi
 
 # --- exec approvals -----------------------------------------------------------
