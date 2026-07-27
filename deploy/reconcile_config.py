@@ -47,13 +47,15 @@ def main() -> int:
     if args.target.exists():
         try:
             base = json.loads(args.target.read_text())
-        except json.JSONDecodeError:
-            # A corrupt config is not worth preserving, and refusing to boot
-            # over it would strand the agent.
-            backup = args.target.with_suffix(".json.corrupt")
-            args.target.rename(backup)
-            print(f"unparseable config moved to {backup}")
-            base = {}
+        except json.JSONDecodeError as exc:
+            # Do not touch a config we cannot read. The earlier version renamed
+            # it and merged onto {}, which produced a file with no gateway, no
+            # auth and no models — the gateway rejects that at <root>, and
+            # because it is PID 1 the VM panics. OpenClaw's own config format is
+            # JSON5, so "does not parse as strict JSON" is a thing that can
+            # legitimately happen here and must never be destructive.
+            print(f"target does not parse as strict JSON ({exc}); leaving it untouched")
+            return 0
     else:
         base = {}
 
