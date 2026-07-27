@@ -6,7 +6,7 @@ blender-mcp/
 image-blaster/
 .cache/
 outputs/
-envs/
+/envs/
 .git/
 .maritime/
 .venv/

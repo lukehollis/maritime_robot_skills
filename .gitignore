@@ -21,7 +21,7 @@ image-blaster/
 .maritime/
 
 # Generated environment packages live on the agent's /data, not in the repo
-envs/
+/envs/
 MUJOCO_LOG.TXT
 .DS_Store
 Physical_AI_Agent/
